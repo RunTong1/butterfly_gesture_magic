@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D AR 魔法指尖 - 霓虹蝶舞</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icon CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- MediaPipe dependencies (Standard script tags for CDN imports) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #050508;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+        /* Ensure video and 3D canvas overlay perfectly */
+        #video-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+        #webcam-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Default mirror mode */
+        }
+        #three-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 10;
+            pointer-events: none; /* Let events pass if needed, though we interact via vision */
+        }
+        #tracking-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 5;
+            pointer-events: none;
+        }
+        /* Custom neon scrollbar for UI panels */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(139, 92, 246, 0.5);
+            border-radius: 10px;
+        }
+        /* Glassmorphism utility */
+        .glass-panel {
+            background: rgba(15, 15, 25, 0.65);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        /* Keyframe animation for magical neon pulse */
+        @keyframes pulse-glow {
+            0%, 100% { opacity: 0.8; filter: drop-shadow(0 0 5px rgba(139,92,246,0.6)); }
+            50% { opacity: 1; filter: drop-shadow(0 0 15px rgba(139,92,246,1)); }
+        }
+        .magic-pulse {
+            animation: pulse-glow 2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- AR Viewports -->
+    <div id="video-container">
+        <video id="webcam-video" autoplay playsinline muted></video>
+    </div>
+    <canvas id="tracking-canvas"></canvas>
+    <div id="three-canvas"></div>
+
+    <!-- UI Overlay (Main Control HUD) -->
+    <div class="absolute inset-0 z-20 flex flex-col justify-between p-4 md:p-6 pointer-events-none">
+        
+        <!-- Header HUD -->
+        <div class="w-full flex justify-between items-start pointer-events-auto">
+            <div class="glass-panel rounded-2xl p-4 flex items-center space-x-3 magic-pulse">
+                <div class="bg-violet-600/30 p-2.5 rounded-xl text-violet-400 border border-violet-500/20">
+                    <i class="fa-solid fa-wand-magic-sparkles text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-white font-extrabold text-sm md:text-base tracking-wider">3D AR BUTTERFLY MAGIC</h1>
+                    <p class="text-[10px] md:text-xs text-violet-300 font-medium">指尖魔法互动特技 v2.1</p>
+                </div>
+            </div>
+
+            <!-- Palette Selector / System Controls -->
+            <div class="flex space-x-2">
+                <button id="btn-mirror" class="glass-panel text-white hover:text-violet-400 p-3 rounded-xl transition pointer-events-auto flex items-center justify-center" title="翻转镜头">
+                    <i class="fa-solid fa-arrows-rotate text-lg"></i>
+                </button>
+                <button id="btn-skeleton" class="glass-panel text-white hover:text-violet-400 px-4 py-2 rounded-xl transition pointer-events-auto text-xs font-semibold flex items-center space-x-2">
+                    <span id="skeleton-status-dot" class="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping"></span>
+                    <span id="skeleton-status-txt">骨骼显示: 开</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Floating Interactive Tutorial Helper (Middle-Left) -->
+        <div class="hidden md:flex flex-col space-y-3 max-w-xs glass-panel rounded-2xl p-4 pointer-events-auto text-white/90">
+            <h3 class="text-xs font-extrabold uppercase tracking-widest text-violet-400 mb-1">🎮 互动手势说明书</h3>
+            <div class="flex items-start space-x-3 text-xs">
+                <span class="bg-violet-500/20 text-violet-300 font-bold px-2 py-0.5 rounded border border-violet-500/30">✊ 握拳蓄力</span>
+                <p class="text-white/70 leading-relaxed text-[11px]">紧握拳头蓄满能量。**松开拳头瞬时爆发 150-350 只球体烟花大爆炸蝴蝶**！</p>
+            </div>
+            <div class="flex items-start space-x-3 text-xs">
+                <span class="bg-violet-500/20 text-violet-300 font-bold px-2 py-0.5 rounded border border-violet-500/30">👌 指尖捏合</span>
+                <p class="text-white/70 leading-relaxed text-[11px]">大拇指和食指紧捏，**生成一只落在你指尖上的3D蝴蝶**，松开即展翅高飞。</p>
+            </div>
+            <div class="flex items-start space-x-3 text-xs">
+                <span class="bg-violet-500/20 text-violet-300 font-bold px-2 py-0.5 rounded border border-violet-500/30">🌀 划动舞动</span>
+                <p class="text-white/70 leading-relaxed text-[11px]">张开五指，在空中划过，拖曳出具有厚重感的大中小型彩色荧光蝶舞与高密度星砂长河。</p>
+            </div>
+        </div>
+
+        <!-- Bottom Controls HUD -->
+        <div class="w-full flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0 pointer-events-auto">
+            
+            <!-- Color Palettes Panel -->
+            <div class="glass-panel rounded-2xl p-3 flex flex-wrap items-center space-x-2 md:space-x-3 text-white">
+                <span class="text-xs font-semibold text-gray-400 pl-2">魔法色系:</span>
+                <div class="flex space-x-1.5 md:space-x-2">
+                    <button class="palette-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-violet-600/40 text-violet-300 border border-violet-500/50" data-palette="dream">
+                        <i class="fa-solid fa-wand-magic mr-1"></i>幻彩
+                    </button>
+                    <button class="palette-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-800/50 hover:bg-gray-700/50 text-gray-300 border border-transparent" data-palette="aurora">
+                        <i class="fa-solid fa-moon mr-1"></i>极光
+                    </button>
+                    <button class="palette-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-800/50 hover:bg-gray-700/50 text-gray-300 border border-transparent" data-palette="gold">
+                        <i class="fa-solid fa-sun mr-1"></i>金澄
+                    </button>
+                    <button class="palette-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-800/50 hover:bg-gray-700/50 text-gray-300 border border-transparent" data-palette="ocean">
+                        <i class="fa-solid fa-water mr-1"></i>幽蓝
+                    </button>
+                </div>
+            </div>
+
+            <!-- Gesture / Performance Status Indicators -->
+            <div class="flex space-x-4 items-center">
+                <div class="glass-panel px-4 py-2.5 rounded-xl flex items-center space-x-2 text-white">
+                    <span class="text-[10px] uppercase font-bold text-gray-400">当前手势</span>
+                    <span id="txt-gesture" class="text-sm font-extrabold text-emerald-400 tracking-wide bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">NONE</span>
+                </div>
+                <div class="glass-panel px-4 py-2.5 rounded-xl flex items-center space-x-2 text-white">
+                    <span class="text-[10px] uppercase font-bold text-gray-400">实时帧率</span>
+                    <span id="txt-fps" class="text-sm font-extrabold text-violet-400">-- FPS</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Mask Cover -->
+    <div id="loading-overlay" class="absolute inset-0 z-50 bg-[#050508] flex flex-col justify-center items-center text-white transition-opacity duration-1000">
+        <div class="relative w-24 h-24 mb-6">
+            <div class="absolute inset-0 rounded-full border-4 border-violet-500/10"></div>
+            <div class="absolute inset-0 rounded-full border-4 border-violet-500 border-t-transparent animate-spin"></div>
+            <div class="absolute inset-0 flex items-center justify-center text-violet-400">
+                <i class="fa-solid fa-butterfly text-3xl animate-pulse"></i>
+            </div>
+        </div>
+        <h2 class="text-xl font-bold tracking-widest text-white">正在觉醒蝴蝶魔法契约...</h2>
+        <p class="text-xs text-gray-500 mt-2">请允许浏览器调取前置或后置摄像头权限</p>
+    </div>
+
+    <script>
+        // Color Palettes
+        const COLOR_PALETTES = {
+            dream: {
+                wingLeft: 0x9060ff,  // Lavender purple
+                wingRight: 0xff60b0, // Glowing hot pink
+                inner: 0xffffff,     // Wing core glow
+                body: 0x221144,
+                particle: [0xa855f7, 0xec4899, 0xf43f5e],
+                light: 0xa855f7
+            },
+            aurora: {
+                wingLeft: 0x10b981,  // Deep emerald green
+                wingRight: 0x06b6d4, // Aurora cyan
+                inner: 0xd1fae5,     // Soft mint inner
+                body: 0x064e3b,
+                particle: [0x10b981, 0x06b6d4, 0x3b82f6],
+                light: 0x10b981
+            },
+            gold: {
+                wingLeft: 0xf59e0b,  // Amber gold
+                wingRight: 0xef4444, // Flame red
+                inner: 0xfef08a,     // Yellow glow
+                body: 0x451a03,
+                particle: [0xf59e0b, 0xef4444, 0xeab308],
+                light: 0xf59e0b
+            },
+            ocean: {
+                wingLeft: 0x3b82f6,  // Royal blue
+                wingRight: 0x06b6d4, // Ocean cyan
+                inner: 0xe0f2fe,     // Light sky blue
+                body: 0x172554,
+                particle: [0x3b82f6, 0x06b6d4, 0x6366f1],
+                light: 0x3b82f6
+            }
+        };
+
+        // UI state variables
+        const state = {
+            activeColorPalette: 'dream',
+            showSkeleton: true,
+            isMirrored: true,
+            handsDetected: false,
+            perchedButterfly: null, 
+            lastPinchPos: null,
+            isFistActive: false,
+            fistChargeTime: 0,
+            chargeOrb: null,
+        };
+
+        // Setup DOM elements
+        const videoElement = document.getElementById('webcam-video');
+        const trackingCanvas = document.getElementById('tracking-canvas');
+        const ctxTrack = trackingCanvas.getContext('2d');
+        const overlay = document.getElementById('loading-overlay');
+        const txtGesture = document.getElementById('txt-gesture');
+        const txtFps = document.getElementById('txt-fps');
+
+        // Global lists for 3D physics updates
+        const butterflies = [];
+        const magicParticles = [];
+
+        // Setup Three.js 3D Scene
+        let scene, camera, renderer;
+        let ambientLight, pointLight;
+
+        function initThree() {
+            const container = document.getElementById('three-canvas');
+            scene = new THREE.Scene();
+
+            // Set up perspective camera matching general viewport aspect ratio
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 5); // Position look down -Z axis
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = false;
+            container.appendChild(renderer.domElement);
+
+            // Magic Lighting
+            ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+            scene.add(ambientLight);
+
+            // Follower light source for explosions and highlights
+            pointLight = new THREE.PointLight(0xa855f7, 2.5, 10);
+            pointLight.position.set(0, 0, 2);
+            scene.add(pointLight);
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            trackingCanvas.width = window.innerWidth;
+            trackingCanvas.height = window.innerHeight;
+        }
+
+        class MagicButterfly {
+            constructor(x, y, z, size = 1.0, isExplosion = false) {
+                this.group = new THREE.Group();
+                this.group.position.set(x, y, z);
+                
+                this.size = size;
+                this.group.scale.set(size, size, size);
+
+                // Initial parameters
+                this.isPerched = false;
+                this.isExplosion = isExplosion;
+                
+                // Physics dynamics
+                this.velocity = new THREE.Vector3(0, 0, 0);
+                // Damping for explosive deceleration (0.95 gives dramatic deceleration)
+                this.damping = isExplosion ? 0.94 : 0.98;
+                
+                // Unique flight noise & wave speed parameters
+                this.noiseOffset = Math.random() * 1000;
+                this.wingFlapSpeed = 10 + Math.random() * 8; // Rad/s
+
+                // Setup geometry & materials of butterfly
+                this.createMesh();
+
+                // Max age / Lifespan handling (Explosion butterflies age slower to persist nicely)
+                this.age = 0.0;
+                this.maxAge = isExplosion ? (120 + Math.random() * 180) : (180 + Math.random() * 120);
+
+                scene.add(this.group);
+            }
+
+            createMesh() {
+                const colors = COLOR_PALETTES[state.activeColorPalette];
+
+                // Body: simple sleek capsule
+                const bodyGeom = new THREE.CylinderGeometry(0.012, 0.008, 0.28, 6);
+                const bodyMat = new THREE.MeshStandardMaterial({
+                    color: colors.body,
+                    roughness: 0.2,
+                    metalness: 0.7
+                });
+                const bodyMesh = new THREE.Mesh(bodyGeom, bodyMat);
+                bodyMesh.rotation.x = Math.PI / 2;
+                this.group.add(bodyMesh);
+
+                // Wing shapes
+                const wingShapeLeft = new THREE.Shape();
+                wingShapeLeft.moveTo(0, 0);
+                wingShapeLeft.bezierCurveTo(0.12, 0.35, 0.45, 0.45, 0.32, 0.12);
+                wingShapeLeft.bezierCurveTo(0.28, 0.02, 0.12, -0.05, 0, 0);
+
+                const lowerWingShapeLeft = new THREE.Shape();
+                lowerWingShapeLeft.moveTo(0, 0);
+                lowerWingShapeLeft.bezierCurveTo(0.08, -0.22, 0.25, -0.22, 0.20, -0.05);
+                lowerWingShapeLeft.bezierCurveTo(0.12, 0.02, 0.05, 0.02, 0, 0);
+
+                const wingShapeRight = new THREE.Shape();
+                wingShapeRight.moveTo(0, 0);
+                wingShapeRight.bezierCurveTo(-0.12, 0.35, -0.45, 0.45, -0.32, 0.12);
+                wingShapeRight.bezierCurveTo(-0.28, 0.02, -0.12, -0.05, 0, 0);
+
+                const lowerWingShapeRight = new THREE.Shape();
+                lowerWingShapeRight.moveTo(0, 0);
+                lowerWingShapeRight.bezierCurveTo(-0.08, -0.22, -0.25, -0.22, -0.20, -0.05);
+                lowerWingShapeRight.bezierCurveTo(-0.12, 0.02, -0.05, 0.02, 0, 0);
+
+                // Glossy glowing materials
+                const createWingMat = (colorHex) => new THREE.MeshPhysicalMaterial({
+                    color: colorHex,
+                    emissive: colorHex,
+                    emissiveIntensity: 1.4,
+                    side: THREE.DoubleSide,
+                    roughness: 0.1,
+                    metalness: 0.1,
+                    transmission: 0.3,
+                    thickness: 0.1
+                });
+
+                const leftMat = createWingMat(colors.wingLeft);
+                const rightMat = createWingMat(colors.wingRight);
+
+                // Left wing assemblies
+                this.leftWingGroup = new THREE.Group();
+                const uLeftMesh = new THREE.Mesh(new THREE.ShapeGeometry(wingShapeLeft), leftMat);
+                const lLeftMesh = new THREE.Mesh(new THREE.ShapeGeometry(lowerWingShapeLeft), leftMat);
+                this.leftWingGroup.add(uLeftMesh);
+                this.leftWingGroup.add(lLeftMesh);
+                this.group.add(this.leftWingGroup);
+
+                // Right wing assemblies
+                this.rightWingGroup = new THREE.Group();
+                const uRightMesh = new THREE.Mesh(new THREE.ShapeGeometry(wingShapeRight), rightMat);
+                const lRightMesh = new THREE.Mesh(new THREE.ShapeGeometry(lowerWingShapeRight), rightMat);
+                this.rightWingGroup.add(uRightMesh);
+                this.rightWingGroup.add(lRightMesh);
+                this.group.add(this.rightWingGroup);
+            }
+
+            update(time) {
+                if (this.isPerched) {
+                    // Lock wing flapping to simple, soft cycle when perching on fingertips
+                    const flap = Math.sin(time * 10) * 0.58;
+                    this.leftWingGroup.rotation.y = flap;
+                    this.rightWingGroup.rotation.y = -flap;
+                    this.group.rotation.y = 0;
+                    this.group.rotation.x = Math.sin(time * 2.5) * 0.08;
+                    return; 
+                }
+
+                // If flying freely, execute normal flight dynamics
+                this.age += 1.0;
+
+                // Decelerate explosion particles gradually
+                this.velocity.multiplyScalar(this.damping);
+
+                // Apply mild sinusoidal noise in freely drifting state to enhance airy feel
+                if (!this.isExplosion || this.velocity.length() < 0.04) {
+                    const phase = time * 0.8 + this.noiseOffset;
+                    this.velocity.x += Math.sin(phase * 1.5) * 0.0006;
+                    this.velocity.y += Math.cos(phase * 1.1) * 0.0006 + 0.0004; // Mild floating lift
+                    this.velocity.z += Math.sin(phase * 0.9) * 0.0006;
+                    
+                    // Normal free-flying flap speed
+                    const flap = Math.sin(time * this.wingFlapSpeed) * 0.95;
+                    this.leftWingGroup.rotation.y = flap;
+                    this.rightWingGroup.rotation.y = -flap;
+                } else {
+                    // Fast explosive flapping speed
+                    const flap = Math.sin(time * 28) * 0.8;
+                    this.leftWingGroup.rotation.y = flap;
+                    this.rightWingGroup.rotation.y = -flap;
+                }
+
+                // Apply velocity
+                this.group.position.add(this.velocity);
+
+                // Tilt / Orient towards direction of flight
+                if (this.velocity.lengthSq() > 0.0001) {
+                    const targetAngle = Math.atan2(this.velocity.x, this.velocity.z);
+                    this.group.rotation.y = THREE.MathUtils.lerp(this.group.rotation.y, targetAngle + Math.PI, 0.1);
+                    this.group.rotation.x = THREE.MathUtils.lerp(this.group.rotation.x, -this.velocity.y * 3.5, 0.1);
+                }
+
+                // Fade out naturally as they age
+                const scaleProg = Math.max(0, 1 - (this.age / this.maxAge));
+                const finalScale = this.size * scaleProg;
+                this.group.scale.set(finalScale, finalScale, finalScale);
+            }
+
+            destroy() {
+                scene.remove(this.group);
+                this.group.traverse(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) child.material.dispose();
+                });
+            }
+        }
+
+        class SparkleParticle {
+            constructor(pos, color, scale = 1.0) {
+                this.velocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.05,
+                    (Math.random() - 0.3) * 0.05,
+                    (Math.random() - 0.5) * 0.05
+                );
+                this.decay = 0.015 + Math.random() * 0.015;
+                this.life = 1.0;
+
+                // Tiny glowing geometric shape (octahedron catches 3D highlights cleanly)
+                const geom = new THREE.OctahedronGeometry(0.024 * scale);
+                const mat = new THREE.MeshStandardMaterial({
+                    color: color,
+                    emissive: color,
+                    emissiveIntensity: 2.2,
+                    roughness: 0.1,
+                    metalness: 0.8
+                });
+                
+                this.mesh = new THREE.Mesh(geom, mat);
+                this.mesh.position.copy(pos);
+                scene.add(this.mesh);
+            }
+
+            update() {
+                this.mesh.position.add(this.velocity);
+                this.velocity.multiplyScalar(0.96); // Inertial air friction
+                this.life -= this.decay;
+                
+                // Animate rotating sparkle axes
+                this.mesh.rotation.x += 0.05;
+                this.mesh.rotation.y += 0.05;
+
+                // Decay scaling structure
+                this.mesh.scale.set(this.life, this.life, this.life);
+            }
+
+            destroy() {
+                scene.remove(this.mesh);
+                if (this.mesh.geometry) this.mesh.geometry.dispose();
+                if (this.mesh.material) this.mesh.material.dispose();
+            }
+        }
+
+        // Helper function to spawn stardust particle trace
+        function spawnSparkle(pos, color, scale = 1.0) {
+            const p = new SparkleParticle(pos, color, scale);
+            magicParticles.push(p);
+        }
+
+        // Convert MediaPipe 2D Coordinates mapped into 3D Space matching WebGL layer
+        function get3DCoordinate(mx, my, depth = 4.5) {
+            const aspect = window.innerWidth / window.innerHeight;
+            const fovRad = (camera.fov * Math.PI) / 180;
+            const heightAtDepth = 2 * Math.tan(fovRad / 2) * depth;
+            const widthAtDepth = heightAtDepth * aspect;
+
+            const targetX = (state.isMirrored ? (1 - mx) : mx) * widthAtDepth - (widthAtDepth / 2);
+            const targetY = -(my * heightAtDepth - (heightAtDepth / 2));
+            const targetZ = -depth + 5; // Aligning space
+
+            return new THREE.Vector3(targetX, targetY, targetZ);
+        }
+
+        function analyzeGestures(landmarks) {
+            // Landmark points indexing:
+            // 0: Wrist, 4: ThumbTip, 8: IndexTip, 12: MiddleTip, 16: RingTip, 20: PinkyTip
+            const getDist = (pt1, pt2) => {
+                const dx = pt1.x - pt2.x;
+                const dy = pt1.y - pt2.y;
+                const dz = pt1.z - pt2.z;
+                return Math.sqrt(dx*dx + dy*dy + dz*dz);
+            };
+
+            // Detect pinch gesture between thumb tip & index tip
+            const pinchDist = getDist(landmarks[4], landmarks[8]);
+            
+            // Detect fist gesture by measuring individual finger tips to the wrist/palm center (landmark 9)
+            const palmCenter = landmarks[9];
+            const fingerTips = [8, 12, 16, 20]; // Keep index, middle, ring, pinky
+            let totalFistDist = 0;
+            fingerTips.forEach(idx => {
+                totalFistDist += getDist(landmarks[idx], palmCenter);
+            });
+            const avgFistDist = totalFistDist / fingerTips.length;
+
+            // Track continuous motion velocity of index finger to capture rapid waving
+            if (!this.lastIndexPos) {
+                this.lastIndexPos = new THREE.Vector3(landmarks[8].x, landmarks[8].y, landmarks[8].z);
+                this.frameVelocity = 0;
+            } else {
+                const curPos = new THREE.Vector3(landmarks[8].x, landmarks[8].y, landmarks[8].z);
+                this.frameVelocity = curPos.distanceTo(this.lastIndexPos);
+                this.lastIndexPos.copy(curPos);
+            }
+
+            // High movement delta indicates circle/rapid movement
+            const isSwirling = this.frameVelocity > 0.052;
+
+            if (pinchDist < 0.038) {
+                return { name: 'PINCH', tip: landmarks[8] };
+            } else if (avgFistDist < 0.12) {
+                return { name: 'FIST', tip: landmarks[9] }; // Fist focused in palm
+            } else if (isSwirling) {
+                return { name: 'CIRCLE', tip: landmarks[8] };
+            }
+
+            return { name: 'NONE', tip: null };
+        }
+
+        // UI state management helper
+        function updateUIState(gestureName) {
+            txtGesture.innerText = gestureName;
+            if (gestureName === 'PINCH') {
+                txtGesture.className = "text-sm font-extrabold text-amber-400 tracking-wide bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20";
+            } else if (gestureName === 'FIST') {
+                txtGesture.className = "text-sm font-extrabold text-rose-500 tracking-wide bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20";
+            } else if (gestureName === 'CIRCLE') {
+                txtGesture.className = "text-sm font-extrabold text-cyan-400 tracking-wide bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20";
+            } else {
+                txtGesture.className = "text-sm font-extrabold text-emerald-400 tracking-wide bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20";
+            }
+        }
+
+        // Draw skeleton lines inside 2D overlay layer
+        function drawHandLandmarks(landmarks) {
+            const w = trackingCanvas.width;
+            const h = trackingCanvas.height;
+            ctxTrack.fillStyle = 'rgba(168, 85, 247, 0.7)'; // Violet tracking dots
+            ctxTrack.strokeStyle = 'rgba(139, 92, 246, 0.4)'; // Cyber skeleton lines
+            ctxTrack.lineWidth = 3.5;
+
+            // MediaPipe standard joints connections map
+            const connections = [
+                [0,1],[1,2],[2,3],[3,4],
+                [0,5],[5,6],[6,7],[7,8],
+                [5,9],[9,10],[10,11],[11,12],
+                [9,13],[13,14],[14,15],[15,16],
+                [13,17],[17,18],[18,19],[19,20],[0,17]
+            ];
+
+            // Render skeletal connections
+            connections.forEach(([start, end]) => {
+                const pt1 = landmarks[start];
+                const pt2 = landmarks[end];
+                ctxTrack.beginPath();
+                
+                const x1 = (state.isMirrored ? (1 - pt1.x) : pt1.x) * w;
+                const x2 = (state.isMirrored ? (1 - pt2.x) : pt2.x) * w;
+                
+                ctxTrack.moveTo(x1, pt1.y * h);
+                ctxTrack.lineTo(x2, pt2.y * h);
+                ctxTrack.stroke();
+            });
+
+            // Render joint dots
+            for (let i = 0; i < landmarks.length; i++) {
+                const lm = landmarks[i];
+                ctxTrack.beginPath();
+                const drawX = (state.isMirrored ? (1 - lm.x) : lm.x) * w;
+                ctxTrack.arc(drawX, lm.y * h, 5, 0, 2 * Math.PI);
+                ctxTrack.fill();
+            }
+        }
+
+        // Maintain perched butterfly state
+        function releasePerchedButterfly() {
+            if (state.perchedButterfly) {
+                state.perchedButterfly.isPerched = false;
+                // Give it a strong, graceful launch impulse
+                state.perchedButterfly.velocity.set(
+                    (Math.random() - 0.5) * 0.03,
+                    0.05 + Math.random() * 0.03,
+                    (Math.random() - 0.5) * 0.03
+                );
+                state.perchedButterfly = null;
+            }
+        }
+
+        // Draw and update active magic loading energy orbs
+        function updateChargeOrb(pos, progression) {
+            const colors = COLOR_PALETTES[state.activeColorPalette];
+            
+            if (!state.chargeOrb) {
+                const orbGroup = new THREE.Group();
+                const coreGeom = new THREE.SphereGeometry(0.24, 32, 32);
+                const coreMat = new THREE.MeshBasicMaterial({
+                    color: colors.light,
+                    transparent: true,
+                    opacity: 0.75
+                });
+                const core = new THREE.Mesh(coreGeom, coreMat);
+                orbGroup.add(core);
+
+                // Add magical rotating ring
+                const ringGeom = new THREE.TorusGeometry(0.36, 0.015, 8, 48);
+                const ringMat = new THREE.MeshBasicMaterial({
+                    color: colors.wingRight,
+                    transparent: true,
+                    opacity: 0.6
+                });
+                const ring = new THREE.Mesh(ringGeom, ringMat);
+                ring.rotation.x = Math.PI / 2;
+                orbGroup.add(ring);
+
+                state.chargeOrb = orbGroup;
+                scene.add(state.chargeOrb);
+            }
+
+            // Progressively scale the charged magic portal
+            const baseScale = 0.3 + progression * 1.5;
+            state.chargeOrb.position.copy(pos);
+            state.chargeOrb.scale.set(baseScale, baseScale, baseScale);
+
+            // Spin ring helper
+            state.chargeOrb.children[1].rotation.z += 0.04;
+            state.chargeOrb.children[1].rotation.x += 0.01;
+
+            // Gravitational dust particle intake effect based on charge progress
+            if (Math.random() < 0.45) {
+                const spawnOffset = new THREE.Vector3(
+                    (Math.random() - 0.5) * 1.4,
+                    (Math.random() - 0.5) * 1.4,
+                    (Math.random() - 0.5) * 1.4
+                ).add(pos);
+                
+                const pColor = colors.particle[Math.floor(Math.random() * colors.particle.length)];
+                const p = new SparkleParticle(spawnOffset, pColor, 0.8);
+                
+                // Gravity velocity pull vector towards palm center
+                p.velocity.copy(pos).sub(spawnOffset).normalize().multiplyScalar(0.04);
+                p.decay = 0.03; // Age out fast upon collapsing
+                magicParticles.push(p);
+            }
+
+            // Match localized points lighting
+            pointLight.position.copy(pos);
+            pointLight.color.setHex(colors.light);
+            pointLight.intensity = 2.0 + progression * 8.0;
+        }
+
+        function removeChargeOrb() {
+            if (state.chargeOrb) {
+                scene.remove(state.chargeOrb);
+                state.chargeOrb.traverse(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) child.material.dispose();
+                });
+                state.chargeOrb = null;
+            }
+        }
+
+        function onResults(results) {
+            updateFPS();
+            ctxTrack.clearRect(0, 0, trackingCanvas.width, trackingCanvas.height);
+            
+            if (trackingCanvas.width !== window.innerWidth) {
+                trackingCanvas.width = window.innerWidth;
+                trackingCanvas.height = window.innerHeight;
+            }
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                state.handsDetected = true;
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // Show skeletal overlays
+                if (state.showSkeleton) {
+                    drawHandLandmarks(landmarks);
+                }
+
+                const gestureResult = analyzeGestures(landmarks);
+                updateUIState(gestureResult.name);
+
+                if (gestureResult.name !== 'NONE' && gestureResult.tip) {
+                    const d3Pos = get3DCoordinate(gestureResult.tip.x, gestureResult.tip.y, 4.5);
+                    state.lastPinchPos = d3Pos;
+
+                    if (gestureResult.name === 'PINCH') {
+                        // Pinch mode: spawn perched butterfly
+                        removeChargeOrb();
+                        state.isFistActive = false;
+                        state.fistChargeTime = 0;
+
+                        if (!state.perchedButterfly) {
+                            const pb = new MagicButterfly(d3Pos.x, d3Pos.y, d3Pos.z, 0.85);
+                            pb.isPerched = true;
+                            butterflies.push(pb);
+                            state.perchedButterfly = pb;
+                        }
+                    }
+                    else if (gestureResult.name === 'FIST') {
+                        // Fist mode: accummulate magic
+                        releasePerchedButterfly();
+                        
+                        state.isFistActive = true;
+                        state.fistChargeTime = Math.min(1.0, state.fistChargeTime + 0.015);
+                        updateChargeOrb(d3Pos, state.fistChargeTime);
+                    }
+                    else if (gestureResult.name === 'CIRCLE') {
+                        // Swirl gesture: create butterfly tracks and particle trails
+                        releasePerchedButterfly();
+                        removeChargeOrb();
+                        state.isFistActive = false;
+                        state.fistChargeTime = 0;
+
+                        // 35% probability of spawning butterflies of randomly assorted sizes
+                        if (Math.random() < 0.35) {
+                            const rSize = 0.25 + Math.random() * 0.75; // Assorted size gradient
+                            const miniButter = new MagicButterfly(d3Pos.x, d3Pos.y, d3Pos.z, rSize);
+                            miniButter.velocity.set(
+                                (Math.random() - 0.5) * 0.06,
+                                (Math.random() - 0.2) * 0.03 + 0.01,
+                                (Math.random() - 0.5) * 0.06
+                            );
+                            butterflies.push(miniButter);
+                        }
+                        
+                        // Dense sparkly trailing sparkles
+                        for(let k = 0; k < 4; k++) {
+                            const offsetPos = d3Pos.clone().add(new THREE.Vector3(
+                                (Math.random() - 0.5) * 0.3,
+                                (Math.random() - 0.5) * 0.3,
+                                (Math.random() - 0.5) * 0.3
+                            ));
+                            const pColor = COLOR_PALETTES[state.activeColorPalette].particle[Math.floor(Math.random() * 3)];
+                            spawnSparkle(offsetPos, pColor, 1.4);
+                        }
+                    }
+                } else {
+                    // Release actions
+                    releasePerchedButterfly();
+
+                    // Explosive Firework Burst Trigger!
+                    if (state.isFistActive && state.fistChargeTime > 0.15) {
+                        // Instantaneous localized flash highlight
+                        pointLight.intensity = 18.0;
+                        pointLight.color.setHex(COLOR_PALETTES[state.activeColorPalette].inner);
+
+                        const releasePos = get3DCoordinate(landmarks[0].x, landmarks[0].y, 4.5);
+                        
+                        // MASSIVE explosion butterfly count (150 to 350 butterflies!)
+                        const explosionCount = Math.floor(state.fistChargeTime * 200) + 150;
+                        
+                        for (let i = 0; i < explosionCount; i++) {
+                            const rSize = 0.15 + Math.random() * 0.55; 
+                            const b = new MagicButterfly(releasePos.x, releasePos.y, releasePos.z, rSize, true); // marked as explosion-particle
+                            
+                            // Perfect isotropic spherical distribution (360° explosive force)
+                            const theta = Math.random() * Math.PI * 2;
+                            const phi = Math.acos((Math.random() * 2) - 1);
+                            
+                            // Double concentric-shell velocity structure: Fast outer shell vs. slow inner core
+                            const isOuterShell = Math.random() > 0.45;
+                            const speed = isOuterShell 
+                                ? (0.16 + Math.random() * 0.22) 
+                                : (0.05 + Math.random() * 0.11); 
+                            
+                            b.velocity.set(
+                                Math.sin(phi) * Math.cos(theta) * speed,
+                                Math.sin(phi) * Math.sin(theta) * speed,
+                                Math.cos(phi) * speed
+                            );
+                            
+                            butterflies.push(b);
+                        }
+
+                        // Massive concentric-shell stardust particles (300 to 500 sparks!)
+                        const shockwaveParticles = Math.floor(state.fistChargeTime * 200) + 300;
+                        for (let j = 0; j < shockwaveParticles; j++) {
+                            const theta = Math.random() * Math.PI * 2;
+                            const phi = Math.acos((Math.random() * 2) - 1);
+                            const speed = 0.12 + Math.random() * 0.45;
+                            
+                            const pColor = COLOR_PALETTES[state.activeColorPalette].particle[Math.floor(Math.random() * 3)];
+                            const p = new SparkleParticle(releasePos, pColor, 1.0 + Math.random() * 1.8);
+                            p.velocity.set(
+                                Math.sin(phi) * Math.cos(theta) * speed,
+                                Math.sin(phi) * Math.sin(theta) * speed,
+                                Math.cos(phi) * speed
+                            );
+                            p.decay = 0.01 + Math.random() * 0.024;
+                            magicParticles.push(p);
+                        }
+                    }
+                    removeChargeOrb();
+                    state.isFistActive = false;
+                    state.fistChargeTime = 0;
+                }
+
+            } else {
+                state.handsDetected = false;
+                updateUIState('NONE');
+                releasePerchedButterfly();
+                removeChargeOrb();
+                state.isFistActive = false;
+                state.fistChargeTime = 0;
+            }
+        }
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const time = clock.getElapsedTime();
+
+            // Smooth decay flash intensity
+            if (pointLight.intensity > 2.5) {
+                pointLight.intensity = THREE.MathUtils.lerp(pointLight.intensity, 2.5, 0.08);
+            }
+
+            // Update freely flying butterflies
+            for (let i = butterflies.length - 1; i >= 0; i--) {
+                const b = butterflies[i];
+                
+                // Track finger coordinates for perched butterflies
+                if (b.isPerched && state.lastPinchPos) {
+                    b.group.position.copy(state.lastPinchPos);
+                }
+
+                b.update(time);
+
+                // Recycle butterflies past expiration age limits
+                if (!b.isPerched && b.age >= b.maxAge) {
+                    b.destroy();
+                    butterflies.splice(i, 1);
+                }
+            }
+
+            // Update free particles
+            for (let j = magicParticles.length - 1; j >= 0; j--) {
+                const p = magicParticles[j];
+                p.update();
+                if (p.life <= 0) {
+                    p.destroy();
+                    magicParticles.splice(j, 1);
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Real-time FPS tracker helper
+        let lastFPSUpdateTime = 0;
+        let frameCount = 0;
+        function updateFPS() {
+            const now = performance.now();
+            frameCount++;
+            if (now - lastFPSUpdateTime >= 1000) {
+                const currentFPS = Math.round((frameCount * 1000) / (now - lastFPSUpdateTime));
+                txtFps.innerText = `${currentFPS} FPS`;
+                frameCount = 0;
+                lastFPSUpdateTime = now;
+            }
+        }
+
+        // MediaPipe Hands module loading handler
+        let activeCameraObj = null;
+        async function startAR() {
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.65,
+                minTrackingConfidence: 0.65
+            });
+
+            hands.onResults(onResults);
+
+            // Attempt user (front facing) first with mirrored stream matching AR mirror standard
+            const startCamera = async (facingMode = 'user') => {
+                if (activeCameraObj) {
+                    await activeCameraObj.stop();
+                }
+                const constraints = {
+                    video: {
+                        facingMode: facingMode,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                };
+
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    videoElement.srcObject = stream;
+                    
+                    activeCameraObj = new Camera(videoElement, {
+                        onFrame: async () => {
+                            await hands.send({ image: videoElement });
+                        },
+                        width: 1280,
+                        height: 720
+                    });
+                    
+                    await activeCameraObj.start();
+                    // Fade out loading block
+                    overlay.classList.add('opacity-0');
+                    setTimeout(() => overlay.remove(), 1000);
+                } catch (e) {
+                    console.error("Camera access failed: ", e);
+                    alert("无法访问您的摄像机权限。请检查网页浏览器权限授权，或尝试在 HTTPS 协议下运行本项目！");
+                }
+            };
+
+            // Start initialization
+            await startCamera(state.isMirrored ? 'user' : 'environment');
+
+            // Set up Interactive Buttons listeners
+            document.getElementById('btn-mirror').addEventListener('click', () => {
+                state.isMirrored = !state.isMirrored;
+                if (state.isMirrored) {
+                    videoElement.style.transform = "scaleX(-1)";
+                    startCamera('user');
+                } else {
+                    videoElement.style.transform = "scaleX(1)";
+                    startCamera('environment');
+                }
+            });
+
+            const btnSkeleton = document.getElementById('btn-skeleton');
+            const dot = document.getElementById('skeleton-status-dot');
+            const txt = document.getElementById('skeleton-status-txt');
+            btnSkeleton.addEventListener('click', () => {
+                state.showSkeleton = !state.showSkeleton;
+                if (state.showSkeleton) {
+                    dot.className = "w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping";
+                    txt.innerText = "骨骼显示: 开";
+                } else {
+                    dot.className = "w-2.5 h-2.5 bg-gray-500 rounded-full";
+                    txt.innerText = "骨骼显示: 关";
+                }
+            });
+
+            // Colorful palette selections listeners
+            const paletteBtns = document.querySelectorAll('.palette-btn');
+            paletteBtns.forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    paletteBtns.forEach(b => {
+                        b.className = "palette-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-800/50 hover:bg-gray-700/50 text-gray-300 border border-transparent";
+                    });
+                    
+                    const sel = btn.getAttribute('data-palette');
+                    state.activeColorPalette = sel;
+                    
+                    // Highlight selected state style
+                    btn.className = "palette-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-violet-600/40 text-violet-300 border border-violet-500/50";
+                });
+            });
+        }
+
+        window.onload = function() {
+            initThree();
+            startAR();
+            animate();
+        };
+    </script>
+</body>
+</html>
